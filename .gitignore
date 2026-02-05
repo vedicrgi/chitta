@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.pid
+.DS_Store
+.tmp
+.venv/
+venv/
