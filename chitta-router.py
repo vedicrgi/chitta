@@ -212,9 +212,41 @@ def route_message(sender, message):
     return openclaw_agent(message, sender)
 
 
+def _contains_url(text: str) -> bool:
+    return bool(re.search(r"https?://", text or ""))
+
+
+def _looks_like_tool_intent(text: str) -> bool:
+    t = _normalize_user_text(text)
+    # Keep this conservative: only block obvious tool/URL requests from FAST.
+    keywords = [
+        "http://",
+        "https://",
+        "fetch ",
+        "open ",
+        "download ",
+        "install ",
+        "curl ",
+        "wget ",
+        "api ",
+    ]
+    return any(k in t for k in keywords)
+
+
 def route_message_struct(message):
     """Routing logic for OpenClaw middleware: never calls OpenClaw; returns a decision."""
     trimmed = (message or "").strip()
+
+    # Deterministic DEEP prefilters: prevent tool-style prompts from getting a FAST "Data Missing".
+    if trimmed and (_contains_url(trimmed) or _looks_like_tool_intent(trimmed)):
+        return {
+            "decision": "deep",
+            "confidence": 1.0,
+            "should_fallthrough": True,
+            "route": "DEEP",
+            "prefilter": "url_or_tool_intent",
+        }
+
     # Deterministic FAST rules to prevent identity/language drift on short messages.
     if _is_greeting(trimmed):
         return {
@@ -255,9 +287,18 @@ def route_message_struct(message):
                 "response": result.get("response", ""),
                 "confidence": float(result.get("confidence", 0.0) or 0.0),
                 "should_fallthrough": bool(result.get("should_fallthrough", False)),
+                "contexts_found": int(result.get("contexts_found", 0) or 0),
+                "sensors_found": int(result.get("sensors_found", 0) or 0),
                 "route": "FAST",
             }
-        return {"decision": "deep", "confidence": 0.0, "should_fallthrough": True, "route": "FAST"}
+        return {
+            "decision": "deep",
+            "confidence": 0.0,
+            "should_fallthrough": True,
+            "contexts_found": 0,
+            "sensors_found": 0,
+            "route": "FAST",
+        }
 
     route = classify_message(trimmed)
 
@@ -266,10 +307,19 @@ def route_message_struct(message):
 
     result = quick_chat(trimmed)
     if not result:
-        return {"decision": "deep", "confidence": 0.0, "should_fallthrough": True, "route": "FAST"}
+        return {
+            "decision": "deep",
+            "confidence": 0.0,
+            "should_fallthrough": True,
+            "contexts_found": 0,
+            "sensors_found": 0,
+            "route": "FAST",
+        }
 
     confidence = float(result.get("confidence", 0.0) or 0.0)
     should_fallthrough = bool(result.get("should_fallthrough", False))
+    contexts_found = int(result.get("contexts_found", 0) or 0)
+    sensors_found = int(result.get("sensors_found", 0) or 0)
     response = (result.get("response") or "").strip()
 
     if response and not should_fallthrough:
@@ -278,6 +328,8 @@ def route_message_struct(message):
             "response": response,
             "confidence": confidence,
             "should_fallthrough": False,
+            "contexts_found": contexts_found,
+            "sensors_found": sensors_found,
             "route": "FAST",
         }
 
@@ -285,6 +337,8 @@ def route_message_struct(message):
         "decision": "deep",
         "confidence": confidence,
         "should_fallthrough": True,
+        "contexts_found": contexts_found,
+        "sensors_found": sensors_found,
         "route": "FAST",
     }
 
