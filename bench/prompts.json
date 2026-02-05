@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "prompts": [
+    {
+      "id": "fast-greeting",
+      "kind": "fast",
+      "prompt": "Hi"
+    },
+    {
+      "id": "fast-identity",
+      "kind": "fast",
+      "prompt": "What is your name?"
+    },
+    {
+      "id": "deep-tool-url",
+      "kind": "deep",
+      "prompt": "Fetch https://httpbin.org/uuid?nocache=TIMESTAMP and tell me the uuid. Use web_fetch only."
+    }
+  ]
+}
