@@ -1,0 +1,30 @@
+# VedicRGI Cursor Rules — chitta (Reflex / Fast Path)
+This repo is **Chitta (Memory)** + the **FAST-path router**. It must enforce the VedicRGI reliability posture.
+
+## Neti, Neti (anti-hallucination)
+- Prefer **"Data Missing"** over guessing.
+- Never fabricate memories; if retrieval is weak, return empty results + low confidence.
+
+## Privacy + encryption
+- Treat all memory content as sensitive.
+- Do not log raw memory payloads unnecessarily.
+- Preserve encryption-at-rest invariants (vault outputs must remain encrypted).
+
+## Tripartite graph invariants (strict)
+- Schema is typed: Context / Moment / Sensor.
+- Do not introduce “generic KG” drift; add types deliberately.
+- Any schema change must come with a migration or be strictly additive.
+
+## FAST vs DEEP contract
+- FAST is only for familiar, high-confidence queries (identity, preferences, summaries).
+- URL/tool-intent prompts should route **DEEP** (deterministic), not FAST.
+
+## Ops + environment
+- Primary working copy: `/Users/VedicRGI_Worker/chitta`.
+- Router listens locally (e.g., `127.0.0.1:18800`).
+- Keep router responses structured and stable (decision/route/confidence + counts).
+
+## Repo hygiene
+- Keep dependencies minimal.
+- Avoid committing generated artifacts (`__pycache__`, logs, local envs).
+- Remote: `git@github.com:vedicrgi/chitta.git`.
