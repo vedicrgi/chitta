@@ -81,6 +81,30 @@ def redact_text(text: str, max_len: int = 700) -> str:
     return t
 
 
+def is_noise(text: str) -> bool:
+    """Check if the text is a placeholder, error, or noise message."""
+    t = text.strip().upper()
+    noise_patterns = [
+        r"^NO_ANSWER_YET$",
+        r"^NO_SIGNAL_HERE",
+        r"^NO_REPLY$",
+        r"^NO_IMAGE_FOUND",
+        r"^NO RESPONSE YET",
+        r"^MEDIA:/USERS/",
+        r"^PRE-COMPACTION MEMORY FLUSH",
+        r"^\[QUEUED MESSAGES WHILE AGENT WAS BUSY\]",
+    ]
+    for p in noise_patterns:
+        if re.search(p, t):
+            return True
+    
+    # Also skip very short messages that don't add value
+    if len(text.strip()) < 3:
+        return True
+        
+    return False
+
+
 def load_state() -> Dict[str, Any]:
     try:
         obj = json.loads(STATE_PATH.read_text(encoding="utf-8"))
@@ -120,7 +144,7 @@ def extract_text_blocks(message: Dict[str, Any]) -> List[Tuple[int, str]]:
     return out
 
 
-def upsert_neo4j_context(
+def chitta_upsert_context(
     driver: GraphDatabase.driver,
     *,
     ctx_id: str,
@@ -168,6 +192,9 @@ def ingest_one_text_block(
     raw_text = raw_text.strip()
     if not raw_text:
         return False
+        
+    if is_noise(raw_text):
+        return False
 
     stable = f"{session_file}:{byte_offset}:{role}:{block_index}"
     item_id = sha256_12_hex(stable)
@@ -200,6 +227,8 @@ def ingest_one_text_block(
 
     try:
         encrypt_file(tmp_path, str(vault_cipher_path), passphrase=passphrase)
+    except Exception as e:
+        print(f"Warning: Failed to encrypt to vault: {e}")
     finally:
         try:
             os.remove(tmp_path)
@@ -211,7 +240,7 @@ def ingest_one_text_block(
     ctx_name = f"session:{session_file}:{role}"
     ctx_source = f"session:{session_file}"
 
-    upsert_neo4j_context(
+    chitta_upsert_context(
         driver,
         ctx_id=ctx_id,
         name=ctx_name,

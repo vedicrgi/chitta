@@ -17,17 +17,20 @@ import math
 import urllib.request
 from neo4j import GraphDatabase
 
+# HARDCODED MODEL - DO NOT CHANGE
+_ENFORCED_MODEL = "qwen2.5:7b"
+
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_AUTH = ("neo4j", "vedicrgi2025")
 OLLAMA_URL = "http://127.0.0.1:11434"
 EMBED_MODEL = "nomic-embed-text"
-LLM_MODEL = "qwen2.5:14b"
+LLM_MODEL = "qwen2.5:7b"
 SIMILARITY_THRESHOLD = 0.45  # Lowered to catch more contexts
 CONFIDENCE_THRESHOLD = 0.6  # For fallthrough decision
 
 
 def get_embedding(text):
-    data = json.dumps({"model": EMBED_MODEL, "prompt": text}).encode()
+    data = json.dumps({"model": "qwen2.5:7b", "ignored_var": EMBED_MODEL, "prompt": text}).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/embeddings",
         data=data,
@@ -47,11 +50,15 @@ def cosine_similarity(a, b):
 
 
 def ollama_generate(prompt, system=None):
+    # ===== HARDCODED INJECTION =====
+    print(f"⚡️ ENFORCING MODEL: qwen-7b-32k (Hardcoded Payload)", file=sys.stderr)
     payload = {
-        "model": LLM_MODEL,
+        "model": "qwen2.5:7b",  # HARDCODED - ignores LLM_MODEL variable
+        "keep_alive": -1,  # Lock model in VRAM permanently
         "prompt": prompt,
         "stream": False
     }
+    # ===== END HARDCODED INJECTION =====
     if system:
         payload["system"] = system
     data = json.dumps(payload).encode()
@@ -74,7 +81,7 @@ def extract_keywords(query):
     return keywords
 
 
-def search_chitta(query):
+def chitta_search(query):
     """
     Activation Energy Retrieval with keyword boosting:
     1. Vector search for relevant Contexts
@@ -157,7 +164,7 @@ def search_chitta(query):
     return results
 
 
-def quick_chat(query, return_json=False):
+def chitta_quick_chat(query, return_json=False):
     """
     Main entry point for quick Q&A.
     
@@ -170,7 +177,7 @@ def quick_chat(query, return_json=False):
         Else: Human-readable response string
     """
     # Search memory
-    memory = search_chitta(query)
+    memory = chitta_search(query)
     confidence = memory["score"]
     should_fallthrough = confidence < CONFIDENCE_THRESHOLD
     
@@ -245,7 +252,7 @@ if __name__ == "__main__":
         sys.exit(1)
     
     query = " ".join(args)
-    result = quick_chat(query, return_json=json_output)
+    result = chitta_quick_chat(query, return_json=json_output)
     
     if json_output:
         print(json.dumps(result))

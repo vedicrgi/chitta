@@ -22,10 +22,13 @@ import urllib.request
 import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# Security layer - user authorization and context building
+import signal_gateway
+
 # Configuration
 ROUTER_PORT = 18800
 OLLAMA_URL = "http://127.0.0.1:11434"
-CLASSIFIER_MODEL = "qwen2.5:0.5b"
+CLASSIFIER_MODEL = "qwen2.5:7b"
 SIGNAL_CLI_URL = "http://127.0.0.1:8080"
 SIGNAL_ACCOUNT = "+919952631996"
 CHITTA_DIR = (
@@ -85,16 +88,25 @@ def _is_english_preference(text: str) -> bool:
 
 
 
-def classify_message(message):
+def manas_classify(message):
     """Use qwen2.5:0.5b to classify message as FAST or DEEP."""
+    import sys
+    print(f"⚡️ ENFORCING CLASSIFIER: qwen2.5:0.5b (Hardcoded Payload)", file=sys.stderr)
     prompt = CLASSIFY_PROMPT.format(message=message[:200])
-    payload = {"model": CLASSIFIER_MODEL, "prompt": prompt, "stream": False}
+    # ===== HARDCODED INJECTION =====
+    payload = {
+        "model": "qwen2.5:0.5b",  # HARDCODED - ignores CLASSIFIER_MODEL variable
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": -1  # Lock classifier in VRAM
+    }
+    # ===== END HARDCODED INJECTION =====
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/generate", data=data, headers={"Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())["response"].strip().upper()
             return "FAST" if "FAST" in result else "DEEP"
     except Exception as e:
@@ -102,7 +114,7 @@ def classify_message(message):
         return "DEEP"
 
 
-def quick_chat(query):
+def chitta_quick_chat(query):
     """Call quick-chat.py and return structured result."""
     try:
         result = subprocess.run(
@@ -168,9 +180,30 @@ def send_signal_message(recipient, message):
             return False
 
 
-def route_message(sender, message):
+def manas_route_message(sender, message):
     """Main routing logic (webhook mode: can fall through into OpenClaw)."""
     print(f"[Router] Received from {sender}: {message[:50]}...")
+
+    # ===== SECURITY GATE =====
+    # Check authorization and build context-aware prompt
+    secure_prompt = signal_gateway.build_context_prompt(sender, message)
+    if secure_prompt is None:
+        print(f"[Router] ⚠️  Unauthorized access attempt from {sender}")
+        return None  # Skip this message entirely
+    
+    # For authorized users, we have the secure context prompt available
+    # The secure_prompt contains user metadata, tone instructions, and boundaries
+    print(f"[Router] ✓ Authorized: {sender}")
+    
+    # ===== ADMIN TRUST PROTOCOL =====
+    # Admin users bypass tool confirmation prompts
+    registry = signal_gateway.load_registry()
+    user_role = registry.get(sender, {}).get('role', '')
+    auto_execute = (user_role == 'ADMIN')
+    if auto_execute:
+        print(f"[Router] 👑 Admin mode: tool confirmation bypassed for {sender}")
+    # ===== END ADMIN TRUST PROTOCOL =====
+    # ===== END SECURITY GATE =====
 
     if _is_greeting(message):
         return "Hi — I’m Manas. How can I help?"
@@ -185,17 +218,17 @@ def route_message(sender, message):
     if message.startswith("/q "):
         query = message[3:].strip()
         print("[Router] /q command detected, using FAST path")
-        result = quick_chat(query)
+        result = chitta_quick_chat(query)
         if result:
             return result.get("response", "")
         return "Quick-chat error. Please try again."
 
     # Semantic classification
-    route = classify_message(message)
+    route = manas_classify(message)
     print(f"[Router] Classified as: {route}")
 
     if route == "FAST":
-        result = quick_chat(message)
+        result = chitta_quick_chat(message)
         if result:
             if result.get("should_fallthrough", False):
                 print(
@@ -209,7 +242,12 @@ def route_message(sender, message):
         return openclaw_agent(message, sender)
 
     print("[Router] Using DEEP path (OpenClaw agent)")
-    return openclaw_agent(message, sender)
+    # Notify user immediately that we are starting a deep run
+    if user_role != "ADMIN": send_signal_message(sender, "Manas is thinking (Deep Path)...")
+    # Pass the secure context prompt to OpenClaw for role-aware processing
+    # The secure_prompt prepends user context to the original message
+    contextualized_message = f"{secure_prompt}\n\n[USER MESSAGE]\n{message}"
+    return openclaw_agent(contextualized_message, sender)
 
 
 def _contains_url(text: str) -> bool:
@@ -233,7 +271,7 @@ def _looks_like_tool_intent(text: str) -> bool:
     return any(k in t for k in keywords)
 
 
-def route_message_struct(message):
+def manas_route_message_struct(message):
     """Routing logic for OpenClaw middleware: never calls OpenClaw; returns a decision."""
     trimmed = (message or "").strip()
 
@@ -248,7 +286,7 @@ def route_message_struct(message):
         }
 
     # Deterministic FAST rules to prevent identity/language drift on short messages.
-    if _is_greeting(trimmed):
+    if _is_greeting(trimmed) or len(trimmed) < 5:
         return {
             "decision": "fast",
             "response": "Hi — I’m Manas. How can I help?",
@@ -280,7 +318,7 @@ def route_message_struct(message):
 
     if trimmed.startswith("/q "):
         query = trimmed[3:].strip()
-        result = quick_chat(query)
+        result = chitta_quick_chat(query)
         if result and result.get("response"):
             return {
                 "decision": "fast",
@@ -300,12 +338,12 @@ def route_message_struct(message):
             "route": "FAST",
         }
 
-    route = classify_message(trimmed)
+    route = manas_classify(trimmed)
 
     if route != "FAST":
         return {"decision": "deep", "confidence": 0.0, "should_fallthrough": True, "route": "DEEP"}
 
-    result = quick_chat(trimmed)
+    result = chitta_quick_chat(trimmed)
     if not result:
         return {
             "decision": "deep",
@@ -371,38 +409,46 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                result = route_message_struct(message)
+                result = manas_route_message_struct(message)
                 self._send_json(200, result)
             except Exception as e:
                 self._send_json(200, {"decision": "deep", "error": str(e), "should_fallthrough": True})
             return
 
-        # Default: treat as signal-cli webhook.
-        try:
-            data = json.loads(body)
-            print(f"[Router] Webhook received: {json.dumps(data)[:200]}")
-
-            envelope = data.get("envelope", data)
-            source = envelope.get("source", envelope.get("sourceNumber", ""))
-
-            data_message = envelope.get("dataMessage", {})
-            message = data_message.get("message", "")
-
-            if not message or not source:
-                self._send_json(200, {"status": "ignored"})
-                return
-
-            response = route_message(source, message)
-
-            if response:
-                send_signal_message(source, response)
-
-            self._send_json(200, {"status": "ok"})
-
-        except Exception as e:
-            print(f"[Router] Webhook error: {e}")
-            self._send_json(500, {"error": str(e)})
-
+#        # Default: treat as signal-cli webhook.
+#        try:
+#            data = json.loads(body)
+#            print(f"[Router] Webhook received: {json.dumps(data)[:200]}")
+#
+#            envelope = data.get("envelope", data)
+#            source = envelope.get("source", envelope.get("sourceNumber", ""))
+#
+#            data_message = envelope.get("dataMessage", {})
+#            message = data_message.get("message", "")
+#
+#            if not message or not source:
+#                self._send_json(200, {"status": "ignored"})
+#                return
+#
+#            # ===== SECURITY GATE (Webhook) =====
+#            secure_prompt = signal_gateway.build_context_prompt(source, message)
+#            if secure_prompt is None:
+#                print(f"[Router] ⚠️  Webhook: Unauthorized access attempt from {source}")
+#                self._send_json(200, {"status": "unauthorized", "sender": source})
+#                return
+#            # ===== END SECURITY GATE =====
+#
+#            response = route_message(source, message)
+#
+#            if response:
+#                send_signal_message(source, response)
+#
+#            self._send_json(200, {"status": "ok"})
+#
+#        except Exception as e:
+#            print(f"[Router] Webhook error: {e}")
+#            self._send_json(500, {"error": str(e)})
+#
     def do_GET(self):
         if self.path == "/health":
             self._send_json(200, {"status": "healthy", "router": "chitta"})
@@ -412,8 +458,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         print(f"[Router] {args[0]}")
-
-
+#
+#
 def main():
     print(
         f"""

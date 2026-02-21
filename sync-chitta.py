@@ -91,7 +91,7 @@ def extract_actions(text):
     return actions[:5]
 
 
-def sync_to_neo4j():
+def chitta_sync_to_neo4j():
     driver = GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH)
     print("Syncing Chitta (Memory Graph)...")
 
@@ -169,4 +169,4 @@ def sync_to_neo4j():
 
 
 if __name__ == "__main__":
-    sync_to_neo4j()
+    chitta_sync_to_neo4j()
