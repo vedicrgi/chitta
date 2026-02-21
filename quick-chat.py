@@ -30,7 +30,7 @@ CONFIDENCE_THRESHOLD = 0.6  # For fallthrough decision
 
 
 def get_embedding(text):
-    data = json.dumps({"model": "qwen2.5:7b", "ignored_var": EMBED_MODEL, "prompt": text}).encode()
+    data = json.dumps({"model": EMBED_MODEL, "prompt": text}).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/embeddings",
         data=data,
